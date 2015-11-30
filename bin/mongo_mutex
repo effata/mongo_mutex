@@ -7,14 +7,16 @@ require 'mongo_mutex'
 require 'socket'
 require 'optionparser'
 require 'open3'
+Mongo::Logger.logger.level = ::Logger::FATAL
 
 hosts = ['127.0.0.1']
 database_name = 'mongo_mutex'
 collection_name = 'mutex'
 lock_name = nil
 locker_name = Socket.gethostname
+block_on_complete = nil
 options = {
-  logger: Logger.new(STDOUT)
+  # logger: Logger.new(STDOUT)
 }
 
 OptionParser.new do |opts|
@@ -41,6 +43,10 @@ OptionParser.new do |opts|
   opts.on('--retention N', Integer, 'Lock retention period in seconds (default 600)') do |retention|
     options[:lock_retention_timeout] = retention
   end
+
+  opts.on('--block N', Integer, 'On success, block other nodes from executing for N seconds') do |block_time|
+    block_on_complete = block_time
+  end
 end.parse!
 
 raise OptionParser::MissingArgument.new('Lock name is mandatory') unless lock_name
@@ -53,22 +59,28 @@ command = ARGV.join(' ')
 
 collection = Mongo::Client.new(hosts, :database => database_name)[collection_name]
 mutex = MongoMutex.new(collection, lock_name, locker_name, options)
+complete_mutex = MongoMutex.new(collection, "#{lock_name}_complete", locker_name, options.merge(:lock_retention_timeout => block_on_complete)) if block_on_complete
 
 mutex.synchronize do
+  if complete_mutex && complete_mutex.locked?
+    puts "Job already completed, skipping"
+    exit
+  end
   Open3.popen3(command) do |stdin, stdout, stderr, wait_thr|
     maxlen = 1024
     pipes = {
-      stdout => :stdout,
-      stderr => :stderr
+      stdout => $stdout,
+      stderr => $stderr
     }
     until pipes.empty?
       IO.select(pipes.keys).first.each do |io|
         begin
-          puts "#{pipes[io]}: #{io.read_nonblock(maxlen)}"
+          pipes[io].write io.read_nonblock(maxlen)
         rescue EOFError
           pipes.delete(io)
         end
       end
     end
+    complete_mutex && complete_mutex.try_lock
   end
 end
