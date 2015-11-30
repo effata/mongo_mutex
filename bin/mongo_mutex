@@ -58,8 +58,8 @@ end
 command = ARGV.join(' ')
 
 collection = Mongo::Client.new(hosts, :database => database_name)[collection_name]
-mutex = MongoMutex.new(collection, lock_name, locker_name, options)
-complete_mutex = MongoMutex.new(collection, "#{lock_name}_complete", locker_name, options.merge(:lock_retention_timeout => block_on_complete)) if block_on_complete
+mutex = MongoMutex::Mutex.new(collection, lock_name, locker_name, options)
+complete_mutex = MongoMutex::Mutex.new(collection, "#{lock_name}_complete", locker_name, options.merge(:lock_retention_timeout => block_on_complete)) if block_on_complete
 
 mutex.synchronize do
   if complete_mutex && complete_mutex.locked?

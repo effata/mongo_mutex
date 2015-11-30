@@ -1,1 +1,1 @@
-require 'mongo_mutex/mongo_mutex'
+require 'mongo_mutex/mutex'
