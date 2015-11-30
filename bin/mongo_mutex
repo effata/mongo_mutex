@@ -1,0 +1,74 @@
+#!/usr/bin/env ruby
+# encoding: utf-8
+
+$: << File.expand_path('../../lib', __FILE__)
+
+require 'mongo_mutex'
+require 'socket'
+require 'optionparser'
+require 'open3'
+
+hosts = ['127.0.0.1']
+database_name = 'mongo_mutex'
+collection_name = 'mutex'
+lock_name = nil
+locker_name = Socket.gethostname
+options = {
+  logger: Logger.new(STDOUT)
+}
+
+OptionParser.new do |opts|
+  opts.on('-c CONFIG_FILE', 'Path to config file containing mongodb connection uri') do |filename|
+    hosts = File.readlines(filename).map(&:strip).reject(&:empty?)
+  end
+
+  opts.on('-h host1,host2', Array, 'MongoDB hosts (defaults to localhost)') do |h|
+    hosts = h.map(&:strip)
+  end
+
+  opts.on('-d DATABASE', '--database DATABASE', 'Database to use (default mongo_mutex)') do |db|
+    database_name = db
+  end
+
+  opts.on('-l LOCK_NAME', '--lock LOCK_NAME', 'Name of the distributed lock') do |lock|
+    lock_name = lock
+  end
+
+  opts.on('-n LOCKER_NAME', '--locker LOCKER_NAME', 'Name of the locking node (defaults to hostname)') do |name|
+    locker_name = name
+  end
+
+  opts.on('--retention N', Integer, 'Lock retention period in seconds (default 600)') do |retention|
+    options[:lock_retention_timeout] = retention
+  end
+end.parse!
+
+raise OptionParser::MissingArgument.new('Lock name is mandatory') unless lock_name
+
+module Enumerable
+  alias :all_are? :all?
+end
+
+command = ARGV.join(' ')
+
+collection = Mongo::Client.new(hosts, :database => database_name)[collection_name]
+mutex = MongoMutex.new(collection, lock_name, locker_name, options)
+
+mutex.synchronize do
+  Open3.popen3(command) do |stdin, stdout, stderr, wait_thr|
+    maxlen = 1024
+    pipes = {
+      stdout => :stdout,
+      stderr => :stderr
+    }
+    until pipes.empty?
+      IO.select(pipes.keys).first.each do |io|
+        begin
+          puts "#{pipes[io]}: #{io.read_nonblock(maxlen)}"
+        rescue EOFError
+          pipes.delete(io)
+        end
+      end
+    end
+  end
+end
