@@ -15,12 +15,11 @@ collection_name = 'mutex'
 lock_name = nil
 locker_name = Socket.gethostname
 block_on_complete = nil
-options = {
-  # logger: Logger.new(STDOUT)
-}
+command = nil
+options = {}
 
 OptionParser.new do |opts|
-  opts.on('-c CONFIG_FILE', 'Path to config file containing mongodb connection uri') do |filename|
+  opts.on('-f CONFIG_FILE', 'Path to config file containing mongodb connection uri') do |filename|
     hosts = File.readlines(filename).map(&:strip).reject(&:empty?)
   end
 
@@ -47,15 +46,19 @@ OptionParser.new do |opts|
   opts.on('--block N', Integer, 'On success, block other nodes from executing for N seconds') do |block_time|
     block_on_complete = block_time
   end
+
+  opts.on('-c COMMAND', '--command', 'Command to execute') do |cmd|
+    command = cmd
+  end
+
 end.parse!
 
+raise OptionParser::MissingArgument.new('Command is mandatory') unless command
 raise OptionParser::MissingArgument.new('Lock name is mandatory') unless lock_name
 
 module Enumerable
   alias :all_are? :all?
 end
-
-command = ARGV.join(' ')
 
 collection = Mongo::Client.new(hosts, :database => database_name)[collection_name]
 mutex = MongoMutex::Mutex.new(collection, lock_name, locker_name, options)
